@@ -17,8 +17,8 @@ seq_window_size = 3600
 [genesis]
   l2_time = 1686068903
   [genesis.l1]
-    hash = "0x438335a20d98863a4c0c97999eb2481921ccd28553eac6f913af7c12aec04108"
-    number = 17422590
+    hash = "0x7fc47bda9f55649e6e8f596680be0fd5a754ba8ae3d47419c57ef662d77f34a5"
+    number = 17422444
   [genesis.l2]
     hash = "0xdbf6a80fef073de06add9b0d14026d6e5a86c85f6d102c36d3d8e9cf89c2afd3"
     number = 105235063
