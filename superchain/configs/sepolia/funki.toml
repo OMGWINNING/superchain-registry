@@ -1,0 +1,51 @@
+name = "Funki Sepolia Testnet"
+public_rpc = "https://funki-testnet.alt.technology"
+sequencer_rpc = "https://funki-testnet.alt.technology"
+explorer = "https://sepolia-sandbox.funkichain.com/"
+governed_by_optimism = false
+data_availability_type = "alt-da"
+chain_id = 3397901
+batch_inbox_addr = "0xff000000000000000000000000000000000084bB"
+block_time = 2
+seq_window_size = 28800
+max_sequencer_drift = 600
+
+[hardforks]
+  canyon_time = 0 # Thu 1 Jan 1970 00:00:00 UTC
+  delta_time = 0 # Thu 1 Jan 1970 00:00:00 UTC
+  ecotone_time = 0 # Thu 1 Jan 1970 00:00:00 UTC
+  pectra_blob_schedule_time = 1744696800 # Tue 15 Apr 2025 06:00:00 UTC
+
+[optimism]
+  eip1559_elasticity = 6
+  eip1559_denominator = 50
+  eip1559_denominator_canyon = 250
+
+[alt_da]
+  da_challenge_contract_address = "0x12C6A7dB25b20347CA6F5d47E56D5E8219871C6d"
+  da_challenge_window = 1
+  da_resolve_window = 1
+  da_commitment_type = "KeccakCommitment"
+
+[genesis]
+  l2_time = 1715060436
+  [genesis.l1]
+    hash = "0x6bc7182e10df2bf35d76362989e10e2c6799c4ceff2eb32741cb804dfab9dd06"
+    number = 5853286
+  [genesis.l2]
+    hash = "0xcebbf8fc7d0fab412866fe1e7df73c721104550ec35e55d173064acb2c0aeac9"
+    number = 0
+  [genesis.system_config]
+    batcherAddress = "0xDa19a4E4d1DbC69bACf13435f08F76cED9B3C245"
+    overhead = "0x00000000000000000000000000000000000000000000000000000000000000b4"
+    scalar = "0x00000000000000000000000000000000000000000000000000000000000a6fe0"
+    gasLimit = 30000000
+
+[roles]
+  ProxyAdminOwner = "0x814973b1ec9Eb9172996931dE7BF1380bd64a824"
+
+[addresses]
+  L1StandardBridgeProxy = "0x1ba82f688eF3C5B4363Ff667254ed4DC59E97477"
+  OptimismPortalProxy = "0xCeE7ef4dDF482447FE14c605Ea94B37cBE87Ca9D"
+  SystemConfigProxy = "0xd6A01f1Ef51D65F023433992a8F62fEeAD35b172"
+  DisputeGameFactoryProxy = "0xEc7C6E35f4e5361D279d5Fe7222F3F45A8A83352"

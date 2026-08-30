@@ -1,0 +1,36 @@
+[
+  {
+    "name": "OP Sepolia Testnet",
+    "identifier": "sepolia/op",
+    "chainId": 11155420,
+    "rpc": [
+      "https://sepolia.optimism.io"
+    ],
+    "explorers": [
+      "https://testnet-explorer.optimism.io"
+    ],
+    "governedByOptimism": true,
+    "dataAvailabilityType": "eth-da",
+    "parent": {
+      "type": "L2",
+      "chain": "sepolia"
+    }
+  },
+  {
+    "name": "TestChain",
+    "identifier": "sepolia/testchain",
+    "chainId": 1952805748,
+    "rpc": [
+      "https://foo.bar.net"
+    ],
+    "explorers": [
+      "https://foo.bar.net"
+    ],
+    "governedByOptimism": false,
+    "dataAvailabilityType": "eth-da",
+    "parent": {
+      "type": "L2",
+      "chain": "sepolia"
+    }
+  }
+]

@@ -1,27 +1,528 @@
 version: 2.1
 
-# this allows us to use CircleCI's dynamic configuration feature
-setup: true
-
 orbs:
-  continuation: circleci/continuation@0.3.1
+  utils: ethereum-optimism/circleci-utils@1.0.27
+  slack: circleci/slack@6.0.0
+
+executors:
+  default:
+    machine:
+      image: ubuntu-2204:2024.08.1
+    resource_class: medium
+
+parameters:
+  default_docker_image:
+    type: string
+    default: cimg/base:2024.01
+  github_repo:
+    type: string
+    default: ethereum-optimism/superchain-registry
+  deployer_cache_dir:
+    type: string
+    default: /home/circleci/tmp/deployer-cache
+  daily_codegen_dispatch:
+    type: boolean
+    default: false
 
 jobs:
-  setup-genesis-allocs-validation:
-    macos:
-      xcode: 14.2.0
-    resource_class: macos.m1.medium.gen1
+  go-lint-test:
+    parameters:
+      package:
+        type: string
+    docker:
+      - image: <<pipeline.parameters.default_docker_image>>
+    environment:
+      DEPLOYER_CACHE_DIR: << pipeline.parameters.deployer_cache_dir >>
+    steps:
+      - utils/checkout-with-mise
+      - attach_workspace:
+          at: /home/circleci
+      - run:
+          name: Tidy mod
+          command: |
+            go mod tidy
+            git diff --exit-code
+          working_directory: << parameters.package >>
+      - run:
+          name: Lint
+          command: golangci-lint run ./...
+          working_directory: << parameters.package >>
+      - run:
+          name: Run tests
+          command: |
+            export SEPOLIA_RPC_URL="$OP_CI_SEPOLIA_L1_RPC_URL"
+            export MAINNET_RPC_URL="$OP_CI_MAINNET_L1_RPC_URL"
+            gotestsum --format testname --junitfile test-results.xml --packages=./... -- --coverprofile coverage.out
+          working_directory: << parameters.package >>
+      - store_test_results:
+          path: << parameters.package >>/test-results.xml
+
+  run-tool:
+    parameters:
+      tool:
+        type: string
+      args:
+        type: string
+        default: ""
+      check_diff:
+        type: boolean
+        default: false
+    docker:
+      - image: <<pipeline.parameters.default_docker_image>>
+    steps:
+      - utils/checkout-with-mise
+      - run:
+          name: Run tool
+          command: go run ./cmd/<< parameters.tool >>/main.go << parameters.args >>
+          working_directory: ops
+      - when:
+          condition: << parameters.check_diff >>
+          steps:
+            - run:
+                name: Check diff
+                command: git diff --exit-code
+
+  check-staging-empty:
+    docker:
+      - image: <<pipeline.parameters.default_docker_image>>
+    steps:
+      - utils/checkout-with-mise
+      - run:
+          name: Check staging is empty
+          command: |
+            # Count number of files in .staging (including hidden files)
+            file_count=$(ls -la .staging | wc -l)
+            # Subtract 3 from count to account for "." and ".." and ".gitkeep"
+            actual_count=$((file_count - 3))
+
+            # Check if .gitkeep exists
+            if [ ! -f ".staging/.gitkeep" ]; then
+                echo "Error: .gitkeep file is missing"
+                exit 1
+            fi
+
+            # Nothing else should be in the directory
+            if [ $actual_count -ne 1 ]; then
+              echo "Staging directory is not empty"
+              exit 1
+            fi
+
+  run-staging-report:
+    docker:
+      - image: <<pipeline.parameters.default_docker_image>>
+    steps:
+      - utils/checkout-with-mise
+      - run:
+          name: Check if PR
+          command: |
+            if [ -z "$CIRCLE_PULL_REQUEST" ]; then
+              echo "Not a PR, skipping"
+              circleci-agent step halt
+            fi
+      - run:
+          name: Run staging report
+          environment:
+            GITHUB_REPO: << pipeline.parameters.github_repo >>
+            DEPLOYER_CACHE_DIR: << pipeline.parameters.deployer_cache_dir >>
+          command: |
+            export SEPOLIA_RPC_URL="$OP_CI_SEPOLIA_L1_RPC_URL"
+            export MAINNET_RPC_URL="$OP_CI_MAINNET_L1_RPC_URL"
+            cd ops
+            go run ./cmd/print_staging_report/main.go
+
+  check-codegen:
+    docker:
+      - image: <<pipeline.parameters.default_docker_image>>
+    steps:
+      - utils/checkout-with-mise
+      - run:
+          name: check-codegen-for-changed-chains
+          command: |
+            set -e
+
+            # Get list of changed files (including deleted ones)
+            CHANGED_FILES=$(git diff --name-only origin/main... | grep "^superchain/configs/.*\.toml$" || true)
+
+            if [ -z "$CHANGED_FILES" ]; then
+              echo "No .toml files changed in superchain/configs, skipping codegen check"
+              exit 0
+            fi
+
+            # Extract superchain names from the file paths
+            SUPERCHAINS=""
+
+            for file in $CHANGED_FILES; do
+              # Extract the superchain name (directory between configs/ and the filename)
+              SUPERCHAIN_NAME=$(echo "$file" | sed -n 's|^superchain/configs/\([^/]*\)/.*$|\1|p')
+
+              # A changed path whose superchain definition no longer exists represents
+              # the removal of an entire superchain.
+              if [ ! -f "superchain/configs/$SUPERCHAIN_NAME/superchain.toml" ]; then
+                echo "Found removed superchain $SUPERCHAIN_NAME"
+                continue
+              fi
+
+              # If this is a superchain.toml file, skip it
+              if [[ "$file" == *"superchain.toml" ]]; then
+                continue
+              fi
+
+              # Check if this superchain is already in our list
+              if [[ ! $SUPERCHAINS =~ (^|,)$SUPERCHAIN_NAME(,|$) ]] && [ -n "$SUPERCHAIN_NAME" ]; then
+                if [ -z "$SUPERCHAINS" ]; then
+                  SUPERCHAINS="$SUPERCHAIN_NAME"
+                else
+                  SUPERCHAINS="$SUPERCHAINS,$SUPERCHAIN_NAME"
+                fi
+                echo "Found superchain $SUPERCHAIN_NAME affected by changes in $file"
+              fi
+            done
+
+            echo "Found the following superchains with changes: $SUPERCHAINS"
+
+            cd ops
+            if [ -n "$SUPERCHAINS" ]; then
+              echo "Running codegen for the following superchains: $SUPERCHAINS\n"
+              go run ./cmd/codegen \
+                --l1-rpc-urls="$OP_CI_SEPOLIA_L1_RPC_URL,$OP_CI_MAINNET_L1_RPC_URL" \
+                --superchains="$SUPERCHAINS"
+            else
+              # No surviving changed superchain is available to trigger codegen.
+              echo "Pruning generated entries for removed superchains\n"
+              go run ./cmd/codegen --prune-removed
+            fi
+
+            if [ -n "$(git status --porcelain)" ]; then
+              echo "\n❌ Changes detected after running codegen. Run the following command locally and commit the changes:\n"
+              if [ -n "$SUPERCHAINS" ]; then
+                echo "go run ./cmd/codegen \\"
+                echo "  --l1-rpc-urls=\"<urls>\" \\"
+                echo "  --superchains=\"$SUPERCHAINS\""
+              else
+                echo "go run ./cmd/codegen --prune-removed"
+              fi
+              echo ""
+              echo "These are the expected changes:"
+              git diff
+              exit 1
+            else
+              echo "\n✅ All codegen files are up to date"
+            fi
+
+  daily-codegen:
+    docker:
+      - image: <<pipeline.parameters.default_docker_image>>
+    steps:
+      - utils/checkout-with-mise
+      - run:
+          name: Run daily codegen
+          command: |
+            set -e
+
+            just codegen $OP_CI_SEPOLIA_L1_RPC_URL,$OP_CI_MAINNET_L1_RPC_URL
+            if [ -n "$(git status --porcelain)" ]; then
+              echo "Changes detected after running codegen, will create a PR to update the codegen files"
+            else
+              echo "No changes detected after running codegen, halting job"
+              circleci-agent step halt
+            fi
+      - run:
+          name: Create PR to update codegen files
+          command: |
+            set -e
+
+            # Configure git
+            git config user.name "opgitgovernance"
+            git config user.email "188376469+opgitgovernance@users.noreply.github.com"
+
+            # Create a new branch
+            BRANCH_NAME="automated-codegen-$(date +%Y%m%d-%H%M%S)"
+            git checkout -b "$BRANCH_NAME"
+
+            # Commit and push changes
+            git add .
+            git commit -m "chore: automated daily codegen update $(date +%Y-%m-%d)"
+            git push https://x-access-token:${GITHUB_TOKEN_GOVERNANCE}@github.com/<< pipeline.parameters.github_repo >>.git "$BRANCH_NAME"
+
+            # Create PR
+            PR_RESPONSE=$(curl -s -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GITHUB_TOKEN_GOVERNANCE}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -H "Content-Type: application/json" \
+              https://api.github.com/repos/<< pipeline.parameters.github_repo >>/pulls \
+              -d "{
+                \"title\": \"chore: automated codegen update $(date +%Y-%m-%d)\",
+                \"body\": \"This is an automated PR created by the daily-codegen circleci job.\\n\\nPlease review and merge if the changes look correct.\\n\\nNote that only these files should have been modified:\\n\\n- [addresses.json](https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/addresses/addresses.json)\\n- [chainList.json](https://github.com/ethereum-optimism/superchain-registry/blob/main/chainList.json)\\n- [chainList.toml](https://github.com/ethereum-optimism/superchain-registry/blob/main/chainList.toml)\\n\\nFor more details see the [runbook](https://www.notion.so/oplabs/superchain-registry-daily-codegen-294f153ee162803788cdee48ec542ca4?v=d784200583d9415587c4dcd2b0c64b2f).\",
+                \"head\": \"$BRANCH_NAME\",
+                \"base\": \"main\"
+              }")
+
+            # Check if PR creation succeeded
+            PR_URL=$(echo "$PR_RESPONSE" | jq -r '.html_url')
+            if [ "$PR_URL" = "null" ] || [ -z "$PR_URL" ]; then
+              echo "Failed to create PR. API response:"
+              echo "$PR_RESPONSE"
+              exit 1
+            fi
+
+            echo "PR created: $PR_URL"
+            echo "export PR_URL=$PR_URL" >> $BASH_ENV
+      - run:
+          name: Send Slack notification
+          command: |
+            SLACK_MESSAGE="🤖 *Daily Codegen Update*\n\n"
+            SLACK_MESSAGE="${SLACK_MESSAGE} <!subteam^S09D13R3HJ7> - codegen job has detected diffs between onchain and superchain-registry data.\n\n"
+            SLACK_MESSAGE="${SLACK_MESSAGE}👀 *Action Required:* Please review and merge PR to update the registry.\n"
+            SLACK_MESSAGE="${SLACK_MESSAGE}🔗 *PR:* <${PR_URL}|View Pull Request> \n"
+            SLACK_MESSAGE="${SLACK_MESSAGE}🔗 *Runbook:* <${RUNBOOK_DAILY_CODEGEN}|View Runbook> \n"
+
+            curl -X POST -H 'Content-type: application/json' \
+              --data "{\"text\":\"$(echo -e "$SLACK_MESSAGE")\"}" \
+              "$SLACK_WEBHOOK_URL"
+      - slack/notify:
+          channel: C03N11M0BBN # notify-ci
+          event: fail
+          template: basic_fail_1
+          mentions: "<!subteam^S09D13R3HJ7>" # @protocol-oncall
+
+  notify-when-chain-is-added-to-registry:
+    executor: default
+    parameters:
+      branch:
+        type: string
+        default: main
+      slack_webhook_url:
+        type: env_var_name
+        default: SLACK_WEBHOOK_URL
     steps:
       - checkout
       - run:
-          name: Generate list of chainids and insert into  continue_config.yml file
+          name: Check if running on main branch
           command: |
-            bash validation/genesis/validation-inputs/generate-test-config.sh
-      - continuation/continue:
-          configuration_path: .circleci/continue_config.yml
-          parameters: '{}'
+            if [ "$CIRCLE_BRANCH" != "<< parameters.branch >>" ]; then
+              echo "Not running on << parameters.branch >> branch (current: $CIRCLE_BRANCH), skipping notification"
+              circleci-agent step halt
+            fi
+      - run:
+          name: Notify when chains are changed in registry
+          command: |
+            set -e
+
+            # Get added, deleted, and modified files
+            ADDED_FILES=$(git diff --name-only --diff-filter=A HEAD~1 HEAD | grep -E "^superchain/configs/(mainnet|sepolia)/.*\.toml$" | grep -v "superchain.toml" || true)
+            DELETED_FILES=$(git diff --name-only --diff-filter=D HEAD~1 HEAD | grep -E "^superchain/configs/(mainnet|sepolia)/.*\.toml$" | grep -v "superchain.toml" || true)
+            MODIFIED_FILES=$(git diff --name-only --diff-filter=M HEAD~1 HEAD | grep -E "^superchain/configs/(mainnet|sepolia)/.*\.toml$" | grep -v "superchain.toml" || true)
+
+            # Check if any changes detected
+            if [ -z "$ADDED_FILES" ] && [ -z "$DELETED_FILES" ] && [ -z "$MODIFIED_FILES" ]; then
+              echo "No chain changes detected in this merge to << parameters.branch >>"
+              exit 0
+            fi
+
+            echo "🔄 Chain changes detected in the registry:"
+            echo "=========================================="
+
+            # Prepare Slack message
+            SLACK_MESSAGE="🔄 *Chain changes in Superchain Registry!*\n\n"
+            TOTAL_CHANGES=0
+
+            # Process added chains
+            if [ -n "$ADDED_FILES" ]; then
+              echo ""
+              echo "➕ ADDED CHAINS:"
+              SLACK_MESSAGE="${SLACK_MESSAGE}*➕ Added Chains:*\n"
+
+              for file in $ADDED_FILES; do
+                CHAIN_NAME=$(basename "$file" .toml)
+                NETWORK=$(echo "$file" | sed -n 's|^superchain/configs/\([^/]*\)/.*$|\1|p')
+
+                echo "  ✅ Chain '$CHAIN_NAME' added to $NETWORK network"
+                SLACK_MESSAGE="${SLACK_MESSAGE}  ✅ \`${CHAIN_NAME}\` added to *${NETWORK}* network\n"
+                TOTAL_CHANGES=$((TOTAL_CHANGES + 1))
+              done
+              SLACK_MESSAGE="${SLACK_MESSAGE}\n"
+            fi
+
+            # Process deleted chains
+            if [ -n "$DELETED_FILES" ]; then
+              echo ""
+              echo "➖ REMOVED CHAINS:"
+              SLACK_MESSAGE="${SLACK_MESSAGE}*➖ Removed Chains:*\n"
+
+              for file in $DELETED_FILES; do
+                CHAIN_NAME=$(basename "$file" .toml)
+                NETWORK=$(echo "$file" | sed -n 's|^superchain/configs/\([^/]*\)/.*$|\1|p')
+
+                echo "  ❌ Chain '$CHAIN_NAME' removed from $NETWORK network"
+                SLACK_MESSAGE="${SLACK_MESSAGE}  ❌ \`${CHAIN_NAME}\` removed from *${NETWORK}* network\n"
+                TOTAL_CHANGES=$((TOTAL_CHANGES + 1))
+              done
+              SLACK_MESSAGE="${SLACK_MESSAGE}\n"
+            fi
+
+            # Process modified chains
+            if [ -n "$MODIFIED_FILES" ]; then
+              echo ""
+              echo "🔧 MODIFIED CHAINS:"
+              SLACK_MESSAGE="${SLACK_MESSAGE}*🔧 Modified Chains:*\n"
+
+              for file in $MODIFIED_FILES; do
+                CHAIN_NAME=$(basename "$file" .toml)
+                NETWORK=$(echo "$file" | sed -n 's|^superchain/configs/\([^/]*\)/.*$|\1|p')
+
+                echo "  🔧 Chain '$CHAIN_NAME' modified in $NETWORK network"
+                SLACK_MESSAGE="${SLACK_MESSAGE}  🔧 \`${CHAIN_NAME}\` modified in *${NETWORK}* network\n"
+                TOTAL_CHANGES=$((TOTAL_CHANGES + 1))
+              done
+              SLACK_MESSAGE="${SLACK_MESSAGE}\n"
+            fi
+
+            echo "=========================================="
+            echo "Total chain changes: $TOTAL_CHANGES"
+
+            # Finalize Slack message
+            SLACK_MESSAGE="${SLACK_MESSAGE}📊 *Total changes:* ${TOTAL_CHANGES}"
+            SLACK_MESSAGE="${SLACK_MESSAGE}\n🔗 *Commit:* <${CIRCLE_BUILD_URL}|View in CircleCI>"
+            SLACK_MESSAGE="${SLACK_MESSAGE}\n🔗 *Commit:* <https://github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/commit/${CIRCLE_SHA1}|${CIRCLE_SHA1:0:7}>"
+
+            # Export for Slack notification
+            echo "export SLACK_PARAM_MESSAGE='${SLACK_MESSAGE}'" >> $BASH_ENV
+            echo "export CHAIN_CHANGES_DETECTED=true" >> $BASH_ENV
+      - run:
+          name: Send Slack notification
+          command: |
+            if [ "$CHAIN_CHANGES_DETECTED" = "true" ]; then
+              # Convert \n to actual newlines for better formatting
+              FORMATTED_MESSAGE=$(echo -e "$SLACK_PARAM_MESSAGE")
+
+              # Send to Slack using webhook
+              curl -X POST -H 'Content-type: application/json' \
+                --data "{\"text\":\"$FORMATTED_MESSAGE\"}" \
+                "$<< parameters.slack_webhook_url >>"
+
+              echo "Slack notification sent successfully"
+            else
+              echo "No changes detected, skipping Slack notification"
+            fi
+  build-deployer-binaries:
+    docker:
+      - image: <<pipeline.parameters.default_docker_image>>
+    environment:
+      DEPLOYER_CACHE_DIR: << pipeline.parameters.deployer_cache_dir >>
+    steps:
+      - utils/checkout-with-mise
+      - restore_cache:
+          key: op-deployer-binaries-{{ checksum "ops/internal/deployer/versions.json" }}-4
+      - run:
+          name: Build deployer binaries
+          command: |
+            cd ops/internal/deployer/scripts
+            chmod +x build-binaries.sh
+            ./build-binaries.sh
+      - save_cache:
+          key: op-deployer-binaries-{{ checksum "ops/internal/deployer/versions.json" }}-4
+          paths:
+            - << pipeline.parameters.deployer_cache_dir >>
+      - persist_to_workspace:
+          root: /home/circleci
+          paths:
+            - tmp/deployer-cache
 
 workflows:
-  setup:
+  main:
     jobs:
-       - setup-genesis-allocs-validation
+      - build-deployer-binaries:
+          name: build-deployer-binaries
+          context: circleci-repo-readonly-authenticated-github-token
+      - go-lint-test:
+          name: go-lint-test-ops
+          package: ops
+          requires:
+            - build-deployer-binaries
+          context:
+            - circleci-repo-readonly-authenticated-github-token
+            - circleci-repo-rpc-secrets
+      - go-lint-test:
+          name: go-lint-test-validation
+          package: validation
+          context:
+            - circleci-repo-readonly-authenticated-github-token
+            - circleci-repo-rpc-secrets
+      - run-tool:
+          name: check-genesis-integrity
+          tool: check_genesis_integrity
+          requires:
+            - build-deployer-binaries
+          context: circleci-repo-readonly-authenticated-github-token
+      - check-codegen:
+          name: check-codegen
+          requires:
+            - build-deployer-binaries
+          context:
+            - circleci-repo-readonly-authenticated-github-token
+            - circleci-repo-rpc-secrets
+      - run-tool:
+          name: check-depsets
+          tool: check_depsets
+          requires:
+            - check-codegen
+            - build-deployer-binaries
+          context: circleci-repo-readonly-authenticated-github-token
+      - run-tool:
+          name: check-staging-synced
+          tool: sync_staging
+          args: --l1-rpc-urls="$OP_CI_SEPOLIA_L1_RPC_URL,$OP_CI_MAINNET_L1_RPC_URL"
+          check_diff: true
+          requires:
+            - build-deployer-binaries
+          context:
+            - circleci-repo-readonly-authenticated-github-token
+            - circleci-repo-rpc-secrets
+      - check-staging-empty:
+          name: check-staging-empty
+          context: circleci-repo-readonly-authenticated-github-token
+      - run-tool:
+          name: check-apply-hardforks
+          tool: apply_hardforks
+          check_diff: true
+          requires:
+            - build-deployer-binaries
+          context: circleci-repo-readonly-authenticated-github-token
+      - run-tool:
+          name: check-chainlist
+          tool: check_chainlist
+          requires:
+            - build-deployer-binaries
+          context: circleci-repo-readonly-authenticated-github-token
+      - run-staging-report:
+          name: run-staging-report
+          requires:
+            - build-deployer-binaries
+          context:
+            - circleci-repo-readonly-authenticated-github-token
+            - circleci-repo-rpc-secrets
+
+  notify-when-chain-is-added-to-registry:
+    when:
+      equal: ["webhook", << pipeline.trigger_source >>]
+    jobs:
+      - notify-when-chain-is-added-to-registry:
+          context: circleci-repo-superchain-registry
+          filters:
+            branches:
+              only:
+                - main
+
+  daily-codegen:
+    when:
+      or:
+        - equal: ["build_daily", << pipeline.schedule.name >>]
+        - and:
+            - equal: [true, << pipeline.parameters.daily_codegen_dispatch >>]
+            - equal: ["api", << pipeline.trigger_source >>]
+    jobs:
+      - daily-codegen:
+          context:
+            - circleci-repo-superchain-registry
+            - circleci-repo-rpc-secrets

@@ -1,0 +1,44 @@
+name = "Pivotal Sepolia"
+public_rpc = "https://sepolia.pivotalprotocol.com/"
+sequencer_rpc = "https://sepolia.pivotalprotocol.com/"
+explorer = "https://sepolia.pivotalscan.org/"
+governed_by_optimism = false
+data_availability_type = "eth-da"
+chain_id = 16481
+batch_inbox_addr = "0xFF000000000000000000000B0000000000016481"
+block_time = 2
+seq_window_size = 3600
+max_sequencer_drift = 600
+
+[hardforks]
+  canyon_time = 0 # Thu 1 Jan 1970 00:00:00 UTC
+  delta_time = 0 # Thu 1 Jan 1970 00:00:00 UTC
+  ecotone_time = 0 # Thu 1 Jan 1970 00:00:00 UTC
+
+[optimism]
+  eip1559_elasticity = 6
+  eip1559_denominator = 50
+  eip1559_denominator_canyon = 250
+
+[genesis]
+  l2_time = 1724315616
+  [genesis.l1]
+    hash = "0x416fb0d9f67e3b0e9701c6bfcb03a13732ddb397158fa8c2ed6e53a33c10995c"
+    number = 6548454
+  [genesis.l2]
+    hash = "0xac7379723e9ff584c00e1cbeb20e76c36dbc98dc8bf2146d1df317b7b6636b91"
+    number = 0
+  [genesis.system_config]
+    batcherAddress = "0xc122b4d47644BBD7A98E41Dd242D20054A11f720"
+    overhead = "0x0000000000000000000000000000000000000000000000000000000000000000"
+    scalar = "0x00000000000000000000000000000000000000000000000000000000000f4240"
+    gasLimit = 30000000
+
+[roles]
+  ProxyAdminOwner = "0x1D60661F40ACC64E38fcAdE8979D22a9B9278E6E"
+
+[addresses]
+  L1StandardBridgeProxy = "0x788De2B0Dd35808a05eAFf7aAf5578B21E0dd9A7"
+  OptimismPortalProxy = "0x923B28e0037A799A1e60368e60c92dFfba982162"
+  SystemConfigProxy = "0x5C72CE6EA707037bC476dA8f4f969bC1f8abc78b"
+  DisputeGameFactoryProxy = "0xcB97C9224Af16C95b8D8959A2752eF1832EB8BA9"

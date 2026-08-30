@@ -1,0 +1,43 @@
+name = "Swan Chain Mainnet"
+public_rpc = "https://mainnet-rpc.swanchain.org"
+sequencer_rpc = "https://sequencer-mainnet.swanchain.org"
+explorer = "https://swanscan.io"
+governed_by_optimism = false
+data_availability_type = "eth-da"
+chain_id = 254
+batch_inbox_addr = "0xfF00000000000000000000000000000000000254"
+block_time = 5
+seq_window_size = 3600
+max_sequencer_drift = 600
+
+[hardforks]
+  canyon_time = 0 # Thu 1 Jan 1970 00:00:00 UTC
+  delta_time = 0 # Thu 1 Jan 1970 00:00:00 UTC
+
+[optimism]
+  eip1559_elasticity = 6
+  eip1559_denominator = 50
+  eip1559_denominator_canyon = 250
+
+[genesis]
+  l2_time = 1718640215
+  [genesis.l1]
+    hash = "0x90dafe09640e2858bce2675c66da6b0f136215a179d49f5c9274252bd5a1f8a2"
+    number = 20112576
+  [genesis.l2]
+    hash = "0x834c39d79eb75c4c52d745e624750b817b66eb13e483b035c42ec3aa5cfa7429"
+    number = 0
+  [genesis.system_config]
+    batcherAddress = "0xde794bEc196832474f2F218135bFd0f7cA7fb038"
+    overhead = "0x0000000000000000000000000000000000000000000000000000000000000834"
+    scalar = "0x00000000000000000000000000000000000000000000000000000000000f4240"
+    gasLimit = 30000000
+
+[roles]
+  ProxyAdminOwner = "0x6197f64902b9275e6815F9A5b641Ed2291A5d39c"
+
+[addresses]
+  L1StandardBridgeProxy = "0xed7525946A09056C6AaE29941b8323017382050e"
+  OptimismPortalProxy = "0xBa50434BC5fCC07406b1baD9AC72a4CDf776db15"
+  SystemConfigProxy = "0x504D56cf68f791B45E3A2e895B0e1562f3431328"
+  DisputeGameFactoryProxy = "0x2069FC7097b7784FCA21aa459e57E95C0046EeCD"

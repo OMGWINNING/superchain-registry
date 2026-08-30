@@ -1,0 +1,53 @@
+name = "Funki"
+public_rpc = "https://rpc-mainnet.funkichain.com"
+sequencer_rpc = "https://rpc-mainnet.funkichain.com"
+explorer = "https://funki.superscan.network"
+governed_by_optimism = false
+data_availability_type = "alt-da"
+chain_id = 33979
+batch_inbox_addr = "0xfF00000000000000000000000000000084BB84Bb"
+block_time = 2
+seq_window_size = 8400
+max_sequencer_drift = 1800
+
+[hardforks]
+  canyon_time = 0 # Thu 1 Jan 1970 00:00:00 UTC
+  delta_time = 0 # Thu 1 Jan 1970 00:00:00 UTC
+  ecotone_time = 0 # Thu 1 Jan 1970 00:00:00 UTC
+  fjord_time = 0 # Thu 1 Jan 1970 00:00:00 UTC
+  granite_time = 1767582000 # Mon 5 Jan 2026 03:00:00 UTC
+  holocene_time = 1767668400 # Tue 6 Jan 2026 03:00:00 UTC
+
+[optimism]
+  eip1559_elasticity = 10
+  eip1559_denominator = 50
+  eip1559_denominator_canyon = 250
+
+[alt_da]
+  da_challenge_contract_address = "0xF40b807c2407e1d7dabb85f3ceefd5EACc7bF3CD"
+  da_challenge_window = 3600
+  da_resolve_window = 3600
+  da_commitment_type = "KeccakCommitment"
+
+[genesis]
+  l2_time = 1721211095
+  [genesis.l1]
+    hash = "0xa0768467271297b618c4306469577fd14ba5b0c0488d6e9710a24762cbfe2928"
+    number = 20325568
+  [genesis.l2]
+    hash = "0x7d2831dd811c616d073342a3074f2ce737c6b200b8192f9528e8bf32b1fac83e"
+    number = 0
+  [genesis.system_config]
+    batcherAddress = "0x73c98Cf34AF1f7D798e8e6f34b16037530Bffc41"
+    overhead = "0x0000000000000000000000000000000000000000000000000000000000000000"
+    scalar = "0x0100000000000000000000000000000000000000000000000000000000003138"
+    gasLimit = 30000000
+
+[roles]
+  ProxyAdminOwner = "0x89CB6669f87c165E7128F4a57476EE4Daa7ffbCD"
+
+[addresses]
+  L1StandardBridgeProxy = "0xA2C1C1A473250094a6244F2bcf6Cb51F670Ad3aC"
+  OptimismPortalProxy = "0x5C9C7f98eD153a2deAA981eB5C97B31744AccF22"
+  SystemConfigProxy = "0xD39a6CcCFa23cb741bB530497e42EC337f1215a8"
+  DisputeGameFactoryProxy = "0x2Dc9d2Cb1Ba0b8A46AE252ab4FBE1ad5C5c3B795"
